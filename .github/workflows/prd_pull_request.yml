@@ -1,0 +1,53 @@
+name: Terraform Prd Pull Request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+env:
+  TF_VERSION: 1.9.5
+
+
+jobs:
+  TF_PLAN:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Install dependencies
+      run: |
+        wget https://releases.hashicorp.com/terraform/${{ env.TF_VERSION }}/terraform_${{ env.TF_VERSION }}_linux_amd64.zip
+        unzip terraform_${{ env.TF_VERSION }}_linux_amd64.zip
+        sudo mv terraform /usr/local/bin/
+    - name: Setup Terraform Backend Initial
+      run: |
+        cat > environment_config/prd_backend.conf << EOF
+          bucket   = "mxs-cloud-terraform-state"
+          assume_role = {
+            role_arn = "arn:aws:iam::083070083004:role/aws-terraform-cross-account-role"
+          }
+        EOF
+    - name: Setup Terraform Backend
+      run: |
+        cat > aws_backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket         = "mxs-cloud-terraform-state"
+              dynamodb_table = "MXS-Terraform-State-Table"
+              key            = "mxs-dynatrace-prd/securitygroup/state"
+              region         = "ap-southeast-1"
+              encrypt        = "true"
+              assume_role = {
+                role_arn       = "arn:aws:iam::083070083004:role/aws-terraform-cross-account-role"
+              }
+            }
+          }
+        EOF
+    - name: Terraform Plan
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      run: |
+        terraform init -backend-config="./environment_config/prd_backend.conf" -backend-config='access_key=${{ secrets.AWS_ACCESS_KEY_ID }}' -backend-config='secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+        terraform plan -var-file="./environment_config/prd_config.tfvars"
